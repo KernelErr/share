@@ -1,21 +1,21 @@
-use crate::config::{Config};
+use crate::config::{Config, StorageOptions};
 use crate::middlewares::auth::AuthorizationService;
-use crate::models::user::{Login, Claims};
+use crate::models::file::{ShareRecord, UploadQuery};
 use crate::models::response::LoginResponse;
-use crate::models::file::{UploadQuery, ShareRecord};
+use crate::models::user::{Claims, Login};
+use actix_web::{http::HeaderValue, post, web, HttpRequest, HttpResponse};
+use chrono::{DateTime, Datelike, Duration, Utc};
+use futures::prelude::*;
+use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use nanoid::nanoid;
-use actix_web::{HttpRequest, HttpResponse, http::HeaderValue, post, web};
-use chrono::{DateTime, Duration, Utc};
-use jsonwebtoken::{encode, decode, EncodingKey, Header, DecodingKey, Algorithm, Validation};
-
+use rusoto_s3::{ListBucketsOutput, PutObjectRequest, S3Client, S3};
+use rusoto_signature::stream::ByteStream;
+use std::lazy::SyncLazy;
 fn generate_link() -> String {
     let alphabet: [char; 53] = [
-        'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j',
-        'k', 'm', 'n', 'p', 'q', 'r', 's', 't', 'u', 'w',
-        'x', 'y', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H',
-        'J', 'K', 'L', 'M', 'N', 'P', 'Q', 'R', 'S', 'T',
-        'U', 'W', 'Z', 'Y', 'Z', '2', '3', '4', '5', '6',
-        '7', '8', '9'
+        'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'm', 'n', 'p', 'q', 'r', 's', 't',
+        'u', 'w', 'x', 'y', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'J', 'K', 'L', 'M', 'N', 'P',
+        'Q', 'R', 'S', 'T', 'U', 'W', 'Z', 'Y', 'Z', '2', '3', '4', '5', '6', '7', '8', '9',
     ];
     nanoid!(8, &alphabet)
 }
@@ -32,12 +32,8 @@ fn extract_jwt(auth: &HeaderValue) -> Option<Claims> {
         &Validation::new(Algorithm::HS256),
     );
     match decode {
-        Ok(decoded) => {
-            Some(decoded.claims)
-        },
-        Err(_) => {
-            None
-        }
+        Ok(decoded) => Some(decoded.claims),
+        Err(_) => None,
     }
 }
 
@@ -54,15 +50,11 @@ async fn login(user: web::Json<Login>) -> HttpResponse {
         iat: Utc::now().timestamp() as usize,
         exp: date.timestamp() as usize,
     };
-    let token = encode(
-        &Header::default(),
-        &claims,
-        &EncodingKey::from_secret(key),
-    ).unwrap();
+    let token = encode(&Header::default(), &claims, &EncodingKey::from_secret(key)).unwrap();
     HttpResponse::Ok().json(LoginResponse {
         result: true,
         msg: "Successfully logged in.".into(),
-        token: token
+        token: token,
     })
 }
 
@@ -82,48 +74,98 @@ async fn session(_: AuthorizationService, req: HttpRequest) -> HttpResponse {
                 iat: Utc::now().timestamp() as usize,
                 exp: date.timestamp() as usize,
             };
-            let token = encode(
-                &Header::default(),
-                &claims,
-                &EncodingKey::from_secret(key),
-            ).unwrap();
+            let token =
+                encode(&Header::default(), &claims, &EncodingKey::from_secret(key)).unwrap();
             HttpResponse::Ok().json(LoginResponse {
                 result: true,
                 msg: "Refreshed token.".into(),
-                token: token
+                token: token,
             })
-        },
-        None => {
-            HttpResponse::Unauthorized().body("Invalid token.")
         }
+        None => HttpResponse::Unauthorized().body("Invalid token."),
     }
 }
 
+static S3: SyncLazy<(S3Client, String)> = SyncLazy::new(|| {
+    let storage_options = StorageOptions::from_env();
+    let cred = rusoto_credential::StaticProvider::new_minimal(
+        storage_options.access_key.clone(),
+        storage_options.secret_access_key.clone(),
+    );
+    let client = rusoto_core::request::HttpClient::new().unwrap();
+    let region = rusoto_signature::Region::Custom {
+        name: storage_options.region_name.clone(),
+        endpoint: storage_options.region_endpoint.clone(),
+    };
+    let s3 = S3Client::new_with(client, cred, region);
+    (s3, storage_options.public_bucket.clone())
+});
+
 #[post("/upload")]
-async fn upload(_: AuthorizationService, query: web::Query<UploadQuery>, req: HttpRequest) -> HttpResponse {
+async fn upload(
+    _: AuthorizationService,
+    query: web::Query<UploadQuery>,
+    req: HttpRequest,
+    mut payload: web::Payload,
+) -> HttpResponse {
     let auth = req.headers().get("Authorization").unwrap();
     let claims = extract_jwt(auth);
     let user = match claims {
-        Some(claims) => {
-            claims.sub
-        },
+        Some(claims) => claims.sub,
         None => {
             return HttpResponse::Unauthorized().body("Invalid token.");
         }
     };
 
-    let contentType = match req.headers().get("content-type") {
-        Some(value) => value.to_str().unwrap(),
+    let content_type = match req.headers().get("content-type") {
+        Some(value) => value.to_str().unwrap().to_string(),
         None => {
             return HttpResponse::BadRequest().finish();
         }
     };
-    let contentLength: usize = match req.headers().get("content-length") {
+    let content_length: usize = match req.headers().get("content-length") {
         Some(value) => value.to_str().unwrap().parse().unwrap(),
         None => {
             return HttpResponse::BadRequest().finish();
         }
     };
+
+    let date = Utc::today();
+    let s3_key = format!(
+        "{}/{}/{}/{}",
+        date.year(),
+        date.month(),
+        date.day(),
+        uuid::Uuid::new_v4()
+    );
+
+    let (mut tx, rx) = futures::channel::mpsc::unbounded();
+
+    actix_web::rt::spawn(async move {
+        S3.0.put_object(PutObjectRequest {
+            content_type: Some(content_type.to_string()),
+            key: s3_key,
+            body: Some(ByteStream::new(rx.map_err(|err| {
+                std::io::Error::new(std::io::ErrorKind::Other, err)
+            }))),
+            bucket: S3.1.clone(),
+
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    });
+
+    let mut len = 0;
+    while let Some(chunk) = payload.next().await {
+        tx.send(chunk.map(|bytes| {
+            len += bytes.len();
+            bytes.to_vec().into()
+        }))
+        .await
+        .unwrap();
+    }
+    tx.close().await;
 
     //ToDo: Implement upload function
     HttpResponse::Ok().body("Developing")

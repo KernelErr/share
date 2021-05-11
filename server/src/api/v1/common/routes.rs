@@ -1,4 +1,4 @@
-use crate::config::{Config, StorageOptions};
+use crate::config::{SecurityOptions, StorageOptions};
 use crate::middlewares::auth::AuthorizationService;
 use crate::models::file::{ShareRecord, UploadQuery};
 use crate::models::response::LoginResponse;
@@ -8,9 +8,10 @@ use chrono::{DateTime, Datelike, Duration, Utc};
 use futures::prelude::*;
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use nanoid::nanoid;
-use rusoto_s3::{ListBucketsOutput, PutObjectRequest, S3Client, S3};
+use rusoto_s3::{ListBucketsOutput, PutObjectRequest, S3Client, S3, DeleteObjectRequest};
 use rusoto_signature::stream::ByteStream;
-use std::lazy::SyncLazy;
+use std::{borrow::Borrow, lazy::SyncLazy};
+
 fn generate_link() -> String {
     let alphabet: [char; 53] = [
         'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'm', 'n', 'p', 'q', 'r', 's', 't',
@@ -23,8 +24,8 @@ fn generate_link() -> String {
 fn extract_jwt(auth: &HeaderValue) -> Option<Claims> {
     let split: Vec<&str> = auth.to_str().unwrap().split("Bearer").collect();
     let token = split[1].trim();
-    let config: Config = Config {};
-    let var = config.get_env_key("SECRET_KEY");
+    let config = SecurityOptions::from_env();
+    let var = config.secret_key;
     let key = var.as_bytes();
     let decode = decode::<Claims>(
         token,
@@ -39,8 +40,8 @@ fn extract_jwt(auth: &HeaderValue) -> Option<Claims> {
 
 #[post("/login")]
 async fn login(user: web::Json<Login>) -> HttpResponse {
-    let config: Config = Config {};
-    let var = config.get_env_key("SECRET_KEY");
+    let config = SecurityOptions::from_env();
+    let var = config.secret_key;
     let key = var.as_bytes();
     let date: DateTime<Utc> = Utc::now() + Duration::hours(12);
 
@@ -60,8 +61,8 @@ async fn login(user: web::Json<Login>) -> HttpResponse {
 
 #[post("/session")]
 async fn session(_: AuthorizationService, req: HttpRequest) -> HttpResponse {
-    let config: Config = Config {};
-    let var = config.get_env_key("SECRET_KEY");
+    let config = SecurityOptions::from_env();
+    let var = config.secret_key;
     let key = var.as_bytes();
     let auth = req.headers().get("Authorization").unwrap();
     let claims = extract_jwt(auth);
@@ -104,6 +105,7 @@ static S3: SyncLazy<(S3Client, String)> = SyncLazy::new(|| {
 #[post("/upload")]
 async fn upload(
     _: AuthorizationService,
+    mongo_client: web::Data<mongodb::Client>,
     query: web::Query<UploadQuery>,
     req: HttpRequest,
     mut payload: web::Payload,
@@ -117,6 +119,19 @@ async fn upload(
         }
     };
 
+    let mut final_type = "code";
+    let utc : DateTime<Utc> = Utc::now();
+    let date = Utc::today();
+    let unique_id = uuid::Uuid::new_v4();
+    let expire_time = match query.expiration {
+        0 => utc + Duration::days(1),
+        1 => utc + Duration::days(3),
+        2 => utc + Duration::days(7),
+        3 => utc + Duration::days(30),
+        4 => utc + Duration::days(365),
+        5 => utc + Duration::days(3650),
+        _ => utc + Duration::days(1),
+    };
     let content_type = match req.headers().get("content-type") {
         Some(value) => value.to_str().unwrap().to_string(),
         None => {
@@ -130,18 +145,40 @@ async fn upload(
         }
     };
 
-    let date = Utc::today();
-    let s3_key = format!(
-        "{}/{}/{}/{}",
-        date.year(),
-        date.month(),
-        date.day(),
-        uuid::Uuid::new_v4()
-    );
+    match query.filetype.as_ref() {
+        "code" => {
+            final_type = "code";
+            if content_length > 1024 * 1024 * 5 {
+                final_type = "file";
+            }
+            if content_length > 1024 * 1024 * 1024 * 2 {
+                return HttpResponse::BadRequest().finish();
+            }
+        },
+        "file" => {
+            final_type = "file";
+            if content_length > 1024 * 1024 * 1024 * 2 {
+                return HttpResponse::BadRequest().finish();
+            }
+        }
+        _ => {
+            return HttpResponse::BadRequest().finish();
+        }
+    }
+
+    if final_type.eq("file") & (query.expiration > 2) {
+        return HttpResponse::BadRequest().finish();
+    }
 
     let (mut tx, rx) = futures::channel::mpsc::unbounded();
-
     actix_web::rt::spawn(async move {
+        let s3_key = format!(
+            "{}/{}/{}/{}",
+            date.year(),
+            date.month(),
+            date.day(),
+            unique_id
+        );
         S3.0.put_object(PutObjectRequest {
             content_type: Some(content_type.to_string()),
             key: s3_key,
@@ -164,8 +201,27 @@ async fn upload(
         }))
         .await
         .unwrap();
+        if len > content_length {
+            break;
+        }
     }
-    tx.close().await;
+    let _ = tx.close().await;
+
+    if len != content_length {
+        let s3_key = format!(
+            "{}/{}/{}/{}",
+            date.year(),
+            date.month(),
+            date.day(),
+            unique_id
+        );
+        S3.0.delete_object(DeleteObjectRequest {
+            key: s3_key,
+            bucket: S3.1.clone(),
+
+            ..Default::default()
+        }).await.unwrap();
+    }
 
     //ToDo: Implement upload function
     HttpResponse::Ok().body("Developing")

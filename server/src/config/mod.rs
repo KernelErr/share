@@ -1,3 +1,3 @@
 mod config;
 
-pub use config::{Config,StorageOptions};
+pub use config::{DatabaseOptions, StorageOptions, SecurityOptions};

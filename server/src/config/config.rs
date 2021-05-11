@@ -1,5 +1,3 @@
-use envfile::EnvFile;
-use std::path::Path;
 use std::env;
 
 pub struct StorageOptions {
@@ -21,11 +19,27 @@ impl StorageOptions {
         }
     }
 }
-pub struct Config {}
 
-impl Config {
-    pub fn get_env_key(&self, key: &str) -> String {
-        let env = EnvFile::new(&Path::new("src/config/config.env")).unwrap();
-        env.get(key).unwrap().to_string()
+pub struct DatabaseOptions {
+    pub connection_string: String,
+}
+
+impl DatabaseOptions {
+    pub fn from_env() -> Self {
+        Self {
+            connection_string: env::var("connection_string").unwrap(),
+        }
+    }
+}
+
+pub struct SecurityOptions {
+    pub secret_key: String,
+}
+
+impl SecurityOptions {
+    pub fn from_env() -> Self {
+        Self {
+            secret_key: env::var("secret_key").unwrap(),
+        }
     }
 }

@@ -5,6 +5,7 @@ mod config;
 mod models;
 mod middlewares;
 mod api;
+mod db;
 use config::DatabaseOptions;
 use mongodb::{Client, options::ClientOptions};
 

@@ -1,25 +1,16 @@
-use crate::config::{SecurityOptions, StorageOptions};
+use crate::{config::{SecurityOptions, StorageOptions}, db::db::add_record};
 use crate::middlewares::auth::AuthorizationService;
 use crate::models::file::{ShareRecord, UploadQuery};
 use crate::models::response::LoginResponse;
 use crate::models::user::{Claims, Login};
+use crate::db::db::genreate_unique_link;
 use actix_web::{http::HeaderValue, post, web, HttpRequest, HttpResponse};
 use chrono::{DateTime, Datelike, Duration, Utc};
 use futures::prelude::*;
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
-use nanoid::nanoid;
-use rusoto_s3::{ListBucketsOutput, PutObjectRequest, S3Client, S3, DeleteObjectRequest};
+use rusoto_s3::{PutObjectRequest, S3Client, S3, DeleteObjectRequest};
 use rusoto_signature::stream::ByteStream;
-use std::{borrow::Borrow, lazy::SyncLazy};
-
-fn generate_link() -> String {
-    let alphabet: [char; 53] = [
-        'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'm', 'n', 'p', 'q', 'r', 's', 't',
-        'u', 'w', 'x', 'y', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'J', 'K', 'L', 'M', 'N', 'P',
-        'Q', 'R', 'S', 'T', 'U', 'W', 'Z', 'Y', 'Z', '2', '3', '4', '5', '6', '7', '8', '9',
-    ];
-    nanoid!(8, &alphabet)
-}
+use std::{lazy::SyncLazy};
 
 fn extract_jwt(auth: &HeaderValue) -> Option<Claims> {
     let split: Vec<&str> = auth.to_str().unwrap().split("Bearer").collect();
@@ -105,11 +96,24 @@ static S3: SyncLazy<(S3Client, String)> = SyncLazy::new(|| {
 #[post("/upload")]
 async fn upload(
     _: AuthorizationService,
-    mongo_client: web::Data<mongodb::Client>,
+    mongodb_client: web::Data<mongodb::Client>,
     query: web::Query<UploadQuery>,
     req: HttpRequest,
     mut payload: web::Payload,
 ) -> HttpResponse {
+    let connection_info = req.connection_info();
+    let remote_addr = match connection_info.realip_remote_addr() {
+        Some(addr) => addr.split(":").next().unwrap(),
+        None => connection_info.remote_addr().unwrap().split(":").next().unwrap()
+    };
+    let ip = match req.headers().get("CF-Connecting-IP") {
+        Some(ip) => ip.to_str().unwrap(),
+        None => remote_addr
+    };
+    let user_agent = match req.headers().get("User-Agent") {
+        Some(ua) => ua.to_str().unwrap(),
+        None => "None"
+    };
     let auth = req.headers().get("Authorization").unwrap();
     let claims = extract_jwt(auth);
     let user = match claims {
@@ -119,7 +123,7 @@ async fn upload(
         }
     };
 
-    let mut final_type = "code";
+    let mut final_type;
     let utc : DateTime<Utc> = Utc::now();
     let date = Utc::today();
     let unique_id = uuid::Uuid::new_v4();
@@ -170,6 +174,7 @@ async fn upload(
         return HttpResponse::BadRequest().finish();
     }
 
+    let ct = content_type.clone();
     let (mut tx, rx) = futures::channel::mpsc::unbounded();
     actix_web::rt::spawn(async move {
         let s3_key = format!(
@@ -180,7 +185,7 @@ async fn upload(
             unique_id
         );
         S3.0.put_object(PutObjectRequest {
-            content_type: Some(content_type.to_string()),
+            content_type: Some(ct.to_string()),
             key: s3_key,
             body: Some(ByteStream::new(rx.map_err(|err| {
                 std::io::Error::new(std::io::ErrorKind::Other, err)
@@ -223,8 +228,39 @@ async fn upload(
         }).await.unwrap();
     }
 
-    //ToDo: Implement upload function
-    HttpResponse::Ok().body("Developing")
+    let s3_key = format!(
+        "{}/{}/{}/{}",
+        date.year(),
+        date.month(),
+        date.day(),
+        unique_id
+    );
+
+    let share_record = ShareRecord {
+        link: genreate_unique_link(&mongodb_client).await,
+        filename: query.filename.clone(),
+        filetype: final_type.into(),
+        object_key: s3_key,
+        content_type: content_type.to_string(),
+        content_length: content_length,
+        create_time: utc,
+        expire_time: expire_time,
+        user: user,
+        ip: ip.into(),
+        user_agent: user_agent.into(),
+        visit_times: 0,
+        active: true,
+        ban: false
+    };
+    
+    match add_record(&mongodb_client, &share_record).await {
+        true => {
+            HttpResponse::Ok().finish()
+        },
+        false => {
+            HttpResponse::InternalServerError().finish()
+        }
+    }
 }
 
 pub fn init_routes(cfg: &mut web::ServiceConfig) {

@@ -12,6 +12,7 @@ pub struct UploadQuery {
 pub struct ShareRecord {
     pub link: String,
     pub filename: String,
+    pub filetype: String,
     pub object_key: String,
     pub content_type: String,
     pub content_length: usize,

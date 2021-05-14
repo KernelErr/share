@@ -13,3 +13,10 @@ pub struct UploadResponse {
     pub msg: String,
     pub link: String
 }
+
+#[derive(Serialize, Deserialize)]
+pub struct SecurityResponse {
+    pub result: bool,
+    pub msg: String,
+    pub public_key: String,
+}

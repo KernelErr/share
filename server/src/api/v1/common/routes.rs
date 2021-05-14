@@ -1,21 +1,25 @@
-use crate::{config::{SecurityOptions, StorageOptions}, db::db::add_record};
+use crate::db::db::genreate_unique_link;
 use crate::middlewares::auth::AuthorizationService;
 use crate::models::file::{ShareRecord, UploadQuery};
-use crate::models::response::LoginResponse;
+use crate::models::response::{LoginResponse, SecurityResponse};
 use crate::models::user::{Claims, Login};
-use crate::db::db::genreate_unique_link;
-use actix_web::{http::HeaderValue, post, web, HttpRequest, HttpResponse};
+use crate::{
+    config::{SecurityOptions, StorageOptions},
+    db::db::add_record,
+};
+use actix_web::{http::HeaderValue, post, get, web, HttpRequest, HttpResponse};
 use chrono::{DateTime, Datelike, Duration, Utc};
 use futures::prelude::*;
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
-use rusoto_s3::{PutObjectRequest, S3Client, S3, DeleteObjectRequest};
+use rsa::{PublicKeyPemEncoding, pem::{EncodeConfig, LineEnding}};
+use rusoto_s3::{DeleteObjectRequest, PutObjectRequest, S3Client, S3};
 use rusoto_signature::stream::ByteStream;
-use std::{lazy::SyncLazy};
+use std::lazy::SyncLazy;
 
-fn extract_jwt(auth: &HeaderValue) -> Option<Claims> {
+fn extract_jwt(auth: &HeaderValue, security_option: &SecurityOptions) -> Option<Claims> {
     let split: Vec<&str> = auth.to_str().unwrap().split("Bearer").collect();
     let token = split[1].trim();
-    let config = SecurityOptions::from_env();
+    let config = security_option.clone();
     let var = config.secret_key;
     let key = var.as_bytes();
     let decode = decode::<Claims>(
@@ -30,9 +34,12 @@ fn extract_jwt(auth: &HeaderValue) -> Option<Claims> {
 }
 
 #[post("/login")]
-async fn login(user: web::Json<Login>) -> HttpResponse {
-    let config = SecurityOptions::from_env();
-    let var = config.secret_key;
+async fn login(
+    user: web::Json<Login>,
+    security_option: web::Data<SecurityOptions>,
+) -> HttpResponse {
+    let config = security_option.clone();
+    let var = config.secret_key.clone();
     let key = var.as_bytes();
     let date: DateTime<Utc> = Utc::now() + Duration::hours(12);
 
@@ -51,12 +58,17 @@ async fn login(user: web::Json<Login>) -> HttpResponse {
 }
 
 #[post("/session")]
-async fn session(_: AuthorizationService, req: HttpRequest) -> HttpResponse {
-    let config = SecurityOptions::from_env();
-    let var = config.secret_key;
+async fn session(
+    _: AuthorizationService,
+    req: HttpRequest,
+    security_option: web::Data<SecurityOptions>,
+) -> HttpResponse {
+    let security_option = security_option.clone();
+    let config = security_option.get_ref();
+    let var = config.secret_key.clone();
     let key = var.as_bytes();
     let auth = req.headers().get("Authorization").unwrap();
-    let claims = extract_jwt(auth);
+    let claims = extract_jwt(auth, config);
     match claims {
         Some(claims) => {
             let date: DateTime<Utc> = Utc::now() + Duration::hours(12);
@@ -78,6 +90,20 @@ async fn session(_: AuthorizationService, req: HttpRequest) -> HttpResponse {
     }
 }
 
+#[get("/security")]
+async fn security(security_option: web::Data<SecurityOptions>) -> HttpResponse {
+    let security_option = security_option.clone();
+    let config = security_option.get_ref();
+    let public_key = config.public_key.to_pem_pkcs8_with_config(EncodeConfig {
+        line_ending: LineEnding::CRLF,
+    }).unwrap();
+    HttpResponse::Ok().json(SecurityResponse {
+        result: true,
+        msg: "Security information secured.".into(),
+        public_key: public_key
+    })
+}
+
 static S3: SyncLazy<(S3Client, String)> = SyncLazy::new(|| {
     let storage_options = StorageOptions::from_env();
     let cred = rusoto_credential::StaticProvider::new_minimal(
@@ -97,25 +123,33 @@ static S3: SyncLazy<(S3Client, String)> = SyncLazy::new(|| {
 async fn upload(
     _: AuthorizationService,
     mongodb_client: web::Data<mongodb::Client>,
+    security_option: web::Data<SecurityOptions>,
     query: web::Query<UploadQuery>,
     req: HttpRequest,
     mut payload: web::Payload,
 ) -> HttpResponse {
+    let security_option = security_option.clone();
+    let config = security_option.get_ref();
     let connection_info = req.connection_info();
     let remote_addr = match connection_info.realip_remote_addr() {
         Some(addr) => addr.split(":").next().unwrap(),
-        None => connection_info.remote_addr().unwrap().split(":").next().unwrap()
+        None => connection_info
+            .remote_addr()
+            .unwrap()
+            .split(":")
+            .next()
+            .unwrap(),
     };
     let ip = match req.headers().get("CF-Connecting-IP") {
         Some(ip) => ip.to_str().unwrap(),
-        None => remote_addr
+        None => remote_addr,
     };
     let user_agent = match req.headers().get("User-Agent") {
         Some(ua) => ua.to_str().unwrap(),
-        None => "None"
+        None => "None",
     };
     let auth = req.headers().get("Authorization").unwrap();
-    let claims = extract_jwt(auth);
+    let claims = extract_jwt(auth, config);
     let user = match claims {
         Some(claims) => claims.sub,
         None => {
@@ -124,7 +158,7 @@ async fn upload(
     };
 
     let mut final_type;
-    let utc : DateTime<Utc> = Utc::now();
+    let utc: DateTime<Utc> = Utc::now();
     let date = Utc::today();
     let unique_id = uuid::Uuid::new_v4();
     let expire_time = match query.expiration {
@@ -158,7 +192,7 @@ async fn upload(
             if content_length > 1024 * 1024 * 1024 * 2 {
                 return HttpResponse::BadRequest().finish();
             }
-        },
+        }
         "file" => {
             final_type = "file";
             if content_length > 1024 * 1024 * 1024 * 2 {
@@ -225,7 +259,9 @@ async fn upload(
             bucket: S3.1.clone(),
 
             ..Default::default()
-        }).await.unwrap();
+        })
+        .await
+        .unwrap();
     }
 
     let s3_key = format!(
@@ -250,16 +286,12 @@ async fn upload(
         user_agent: user_agent.into(),
         visit_times: 0,
         active: true,
-        ban: false
+        ban: false,
     };
-    
+
     match add_record(&mongodb_client, &share_record).await {
-        true => {
-            HttpResponse::Ok().finish()
-        },
-        false => {
-            HttpResponse::InternalServerError().finish()
-        }
+        true => HttpResponse::Ok().finish(),
+        false => HttpResponse::InternalServerError().finish(),
     }
 }
 
@@ -267,4 +299,5 @@ pub fn init_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(login);
     cfg.service(session);
     cfg.service(upload);
+    cfg.service(security);
 }

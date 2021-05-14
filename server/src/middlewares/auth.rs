@@ -1,6 +1,7 @@
 use crate::config::SecurityOptions;
 use crate::models::user::Claims;
-use actix_web::{dev, Error, FromRequest, error::ErrorUnauthorized, HttpRequest};
+use actix_web::{dev, error::ErrorUnauthorized, Error, FromRequest, HttpRequest};
+use actix_web::web::Data;
 use futures::future::{err, ok, Ready};
 use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 
@@ -15,10 +16,10 @@ impl FromRequest for AuthorizationService {
         let auth = req.headers().get("Authorization");
         match auth {
             Some(_) => {
+                let config = req.app_data::<Data<SecurityOptions>>().unwrap().get_ref();
                 let split: Vec<&str> = auth.unwrap().to_str().unwrap().split("Bearer").collect();
                 let _token = split[1].trim();
-                let config = SecurityOptions::from_env();
-                let var = config.secret_key;
+                let var = config.secret_key.clone();
                 let key = var.as_bytes();
                 match decode::<Claims>(
                     _token,
@@ -28,8 +29,8 @@ impl FromRequest for AuthorizationService {
                     Ok(_token) => ok(AuthorizationService),
                     Err(_e) => err(ErrorUnauthorized("Invalid token.")),
                 }
-            },
-            None => err(ErrorUnauthorized("No token found."))
+            }
+            None => err(ErrorUnauthorized("No token found.")),
         }
     }
 }

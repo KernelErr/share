@@ -1,0 +1,37 @@
+trigger:
+- main
+
+jobs:
+  - job: 'server'
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+      - script: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain nightly
+          echo "##vso[task.setvariable variable=PATH;]$PATH:$HOME/.cargo/bin"
+        displayName: Install Rust nightly toolchain
+      - script: |
+          rustup component add clippy
+        displayName: Install Rust components
+      - script: cargo clippy
+        workingDirectory: $(Build.sourcesdirectory)/server
+        displayName: Run Clippy
+      - script: cargo build
+        workingDirectory: $(Build.sourcesdirectory)/server
+        displayName: Cargo build
+      - script: cargo test
+        workingDirectory: $(Build.sourcesdirectory)/server
+        displayName: Cargo test
+  - job: 'serverDocker'
+    pool:
+      vmImage: 'ubuntu-latest'
+    variables:
+      imageName: 'share-server'
+      DOCKER_BUILDKIT: 1
+    steps:
+      - task: Docker@2
+        displayName: Build server image
+        inputs:
+          repository: $(imageName)
+          command: build
+          Dockerfile: server/Dockerfile

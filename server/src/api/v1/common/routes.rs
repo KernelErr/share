@@ -1,11 +1,10 @@
-use crate::db::db::genreate_unique_link;
 use crate::middlewares::auth::AuthorizationService;
 use crate::models::file::{ShareRecord, UploadQuery};
 use crate::models::response::{LoginResponse, SecurityResponse};
 use crate::models::user::{Claims, Login};
 use crate::{
     config::{SecurityOptions, StorageOptions},
-    db::db::add_record,
+    db::{add_record, genreate_unique_link},
 };
 use actix_web::{http::HeaderValue, post, get, web, HttpRequest, HttpResponse};
 use chrono::{DateTime, Datelike, Duration, Utc};
@@ -38,7 +37,7 @@ async fn login(
     user: web::Json<Login>,
     security_option: web::Data<SecurityOptions>,
 ) -> HttpResponse {
-    let config = security_option.clone();
+    let config = security_option;
     let var = config.secret_key.clone();
     let key = var.as_bytes();
     let date: DateTime<Utc> = Utc::now() + Duration::hours(12);
@@ -53,7 +52,7 @@ async fn login(
     HttpResponse::Ok().json(LoginResponse {
         result: true,
         msg: "Successfully logged in.".into(),
-        token: token,
+        token
     })
 }
 
@@ -63,7 +62,7 @@ async fn session(
     req: HttpRequest,
     security_option: web::Data<SecurityOptions>,
 ) -> HttpResponse {
-    let security_option = security_option.clone();
+    let security_option = security_option;
     let config = security_option.get_ref();
     let var = config.secret_key.clone();
     let key = var.as_bytes();
@@ -73,7 +72,7 @@ async fn session(
         Some(claims) => {
             let date: DateTime<Utc> = Utc::now() + Duration::hours(12);
             let claims = Claims {
-                sub: claims.sub.to_string(),
+                sub: claims.sub,
                 role: "user".into(),
                 iat: Utc::now().timestamp() as usize,
                 exp: date.timestamp() as usize,
@@ -83,7 +82,7 @@ async fn session(
             HttpResponse::Ok().json(LoginResponse {
                 result: true,
                 msg: "Refreshed token.".into(),
-                token: token,
+                token
             })
         }
         None => HttpResponse::Unauthorized().body("Invalid token."),
@@ -92,7 +91,7 @@ async fn session(
 
 #[get("/security")]
 async fn security(security_option: web::Data<SecurityOptions>) -> HttpResponse {
-    let security_option = security_option.clone();
+    let security_option = security_option;
     let config = security_option.get_ref();
     let public_key = config.public_key.to_pem_pkcs8_with_config(EncodeConfig {
         line_ending: LineEnding::CRLF,
@@ -100,7 +99,7 @@ async fn security(security_option: web::Data<SecurityOptions>) -> HttpResponse {
     HttpResponse::Ok().json(SecurityResponse {
         result: true,
         msg: "Security information secured.".into(),
-        public_key: public_key
+        public_key
     })
 }
 
@@ -116,7 +115,7 @@ static S3: SyncLazy<(S3Client, String)> = SyncLazy::new(|| {
         endpoint: storage_options.region_endpoint.clone(),
     };
     let s3 = S3Client::new_with(client, cred, region);
-    (s3, storage_options.public_bucket.clone())
+    (s3, storage_options.public_bucket)
 });
 
 #[post("/upload")]
@@ -132,11 +131,11 @@ async fn upload(
     let config = security_option.get_ref();
     let connection_info = req.connection_info();
     let remote_addr = match connection_info.realip_remote_addr() {
-        Some(addr) => addr.split(":").next().unwrap(),
+        Some(addr) => addr.split(':').next().unwrap(),
         None => connection_info
             .remote_addr()
             .unwrap()
-            .split(":")
+            .split(':')
             .next()
             .unwrap(),
     };
@@ -278,10 +277,10 @@ async fn upload(
         filetype: final_type.into(),
         object_key: s3_key,
         content_type: content_type.to_string(),
-        content_length: content_length,
+        content_length,
         create_time: utc,
-        expire_time: expire_time,
-        user: user,
+        expire_time,
+        user,
         ip: ip.into(),
         user_agent: user_agent.into(),
         visit_times: 0,

@@ -8,12 +8,19 @@ jobs:
     pool:
       vmImage: 'ubuntu-latest'
     steps:
+      - task: NodeTool@0
+        inputs:
+          versionSpec: '14.x'
+        displayName: Install Node.js 14
       - script: |
-          npm install
+          sudo npm install -g npm
+        displayName: Upgrade npm
+      - script: |
+          /usr/local/bin/npm install
         workingDirectory: $(Build.sourcesdirectory)/app
         displayName: Run npm install
       - script: |
-          npm run build
+          /usr/local/bin/npm run build
         workingDirectory: $(Build.sourcesdirectory)/app
         displayName: Build frontend
       

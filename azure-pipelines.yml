@@ -1,7 +1,23 @@
 trigger:
-- main
+  branches:
+    include:
+      - '*'
 
 jobs:
+  - job: 'app'
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+      - script: |
+          npm install
+        workingDirectory: $(Build.sourcesdirectory)/app
+        displayName: Run npm install
+      - script: |
+          npm run build
+        workingDirectory: $(Build.sourcesdirectory)/app
+        displayName: Build frontend
+      
+
   - job: 'server'
     pool:
       vmImage: 'ubuntu-latest'
@@ -13,7 +29,8 @@ jobs:
       - script: |
           rustup component add clippy
         displayName: Install Rust components
-      - script: cargo clippy
+      - script: |
+          cargo clippy
         workingDirectory: $(Build.sourcesdirectory)/server
         displayName: Run Clippy
       - script: cargo build
@@ -22,6 +39,7 @@ jobs:
       - script: cargo test
         workingDirectory: $(Build.sourcesdirectory)/server
         displayName: Cargo test
+
   - job: 'serverDocker'
     pool:
       vmImage: 'ubuntu-latest'

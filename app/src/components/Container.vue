@@ -93,4 +93,7 @@ export default {
 .el-container {
   height: 100%;
 }
+.el-menu {
+  background-color: inherit;
+}
 </style>

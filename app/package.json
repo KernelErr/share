@@ -12,7 +12,8 @@
     "element-plus": "^1.0.2-beta.44",
     "sass": "^1.32.13",
     "sass-loader": "^10.1.1",
-    "vue": "^3.0.0"
+    "vue": "^3.0.0",
+    "vue-router": "^4.0.8"
   },
   "devDependencies": {
     "@vue/cli-plugin-babel": "~4.5.0",

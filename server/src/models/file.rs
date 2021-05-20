@@ -6,6 +6,7 @@ pub struct UploadQuery {
     pub filename: String,
     pub expiration: u32,
     pub filetype: String,
+    pub password: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -18,6 +19,7 @@ pub struct ShareRecord {
     pub content_length: usize,
     pub create_time: DateTime<Utc>,
     pub expire_time: DateTime<Utc>,
+    pub password: Option<String>,
     pub user: String,
     pub ip: String,
     pub user_agent: String,

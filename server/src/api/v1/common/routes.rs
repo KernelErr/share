@@ -10,10 +10,11 @@ use actix_web::{http::HeaderValue, post, get, web, HttpRequest, HttpResponse};
 use chrono::{DateTime, Datelike, Duration, Utc};
 use futures::prelude::*;
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
-use rsa::{PublicKeyPemEncoding, pem::{EncodeConfig, LineEnding}};
+use rsa::{PaddingScheme, PublicKeyPemEncoding, pem::{EncodeConfig, LineEnding}};
 use rusoto_s3::{DeleteObjectRequest, PutObjectRequest, S3Client, S3};
 use rusoto_signature::stream::ByteStream;
 use std::lazy::SyncLazy;
+use base64;
 
 fn extract_jwt(auth: &HeaderValue, security_option: &SecurityOptions) -> Option<Claims> {
     let split: Vec<&str> = auth.to_str().unwrap().split("Bearer").collect();
@@ -182,6 +183,15 @@ async fn upload(
         }
     };
 
+    let password: Option<String> = match query.password {
+        Some(_) => {
+            let text = base64::decode_config(query.password.clone().unwrap(), base64::URL_SAFE).unwrap();
+            let data = security_option.private_key.decrypt(PaddingScheme::new_pkcs1v15_encrypt(), &text).unwrap();
+            Some(String::from_utf8(data).unwrap())
+        },
+        None => None
+    };
+
     match query.filetype.as_ref() {
         "code" => {
             final_type = "code";
@@ -280,6 +290,7 @@ async fn upload(
         content_length,
         create_time: utc,
         expire_time,
+        password,
         user,
         ip: ip.into(),
         user_agent: user_agent.into(),

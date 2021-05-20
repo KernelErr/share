@@ -41,21 +41,41 @@ pub async fn add_record(mongodb_client: &Client, share_record: &ShareRecord) -> 
         return false;
     }
     let content_length : u64 = share_record.content_length.to_string().parse::<u64>().unwrap();
-    let doc = doc! {
-        "link": share_record.link.clone(),
-        "filename": share_record.filename.clone(),
-        "filetype": share_record.filetype.clone(),
-        "object_key": share_record.object_key.clone(),
-        "content_type": share_record.content_type.clone(),
-        "content_length": content_length,
-        "create_time": share_record.create_time,
-        "expire_time": share_record.expire_time,
-        "user": share_record.user.clone(),
-        "ip": share_record.ip.clone(),
-        "user_agent": share_record.user_agent.clone(),
-        "visit_times": share_record.visit_times,
-        "active": share_record.active,
-        "ban": share_record.ban,
+    let doc = match share_record.password {
+        Some(_) => doc! {
+            "link": share_record.link.clone(),
+            "filename": share_record.filename.clone(),
+            "filetype": share_record.filetype.clone(),
+            "object_key": share_record.object_key.clone(),
+            "content_type": share_record.content_type.clone(),
+            "content_length": content_length,
+            "create_time": share_record.create_time,
+            "expire_time": share_record.expire_time,
+            "password": share_record.password.clone().unwrap(),
+            "user": share_record.user.clone(),
+            "ip": share_record.ip.clone(),
+            "user_agent": share_record.user_agent.clone(),
+            "visit_times": share_record.visit_times,
+            "active": share_record.active,
+            "ban": share_record.ban,
+        },
+        None => doc! {
+            "link": share_record.link.clone(),
+            "filename": share_record.filename.clone(),
+            "filetype": share_record.filetype.clone(),
+            "object_key": share_record.object_key.clone(),
+            "content_type": share_record.content_type.clone(),
+            "content_length": content_length,
+            "create_time": share_record.create_time,
+            "expire_time": share_record.expire_time,
+            "password": null,
+            "user": share_record.user.clone(),
+            "ip": share_record.ip.clone(),
+            "user_agent": share_record.user_agent.clone(),
+            "visit_times": share_record.visit_times,
+            "active": share_record.active,
+            "ban": share_record.ban,
+        }
     };
     mongodb_records_collection.insert_one(doc, None).await.is_ok()
 }

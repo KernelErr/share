@@ -1,7 +1,7 @@
 use crate::config::SecurityOptions;
 use crate::models::user::Claims;
-use actix_web::{dev, error::ErrorUnauthorized, Error, FromRequest, HttpRequest};
 use actix_web::web::Data;
+use actix_web::{dev, error::ErrorUnauthorized, Error, FromRequest, HttpRequest};
 use futures::future::{err, ok, Ready};
 use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 

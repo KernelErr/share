@@ -11,7 +11,7 @@ pub struct LoginResponse {
 pub struct UploadResponse {
     pub result: bool,
     pub msg: String,
-    pub link: String
+    pub link: String,
 }
 
 #[derive(Serialize, Deserialize)]

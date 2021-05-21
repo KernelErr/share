@@ -1,9 +1,6 @@
-use nanoid::nanoid;
-use mongodb::{
-    bson::{doc},
-    Client
-};
 use crate::models::file::ShareRecord;
+use mongodb::{bson::doc, Client};
+use nanoid::nanoid;
 
 pub async fn genreate_unique_link(mongodb_client: &Client) -> String {
     let mongodb_db = mongodb_client.database("share");
@@ -16,10 +13,16 @@ pub async fn genreate_unique_link(mongodb_client: &Client) -> String {
     let mut flag = false;
     let mut link = nanoid!(8, &alphabet);
     while !flag {
-        let result = mongodb_records_collection.find_one( doc! {
-            "link": &link,
-            "active": true
-        },None).await.unwrap();
+        let result = mongodb_records_collection
+            .find_one(
+                doc! {
+                    "link": &link,
+                    "active": true
+                },
+                None,
+            )
+            .await
+            .unwrap();
         if result.is_some() {
             link = nanoid!(8, &alphabet);
         } else {
@@ -33,14 +36,24 @@ pub async fn add_record(mongodb_client: &Client, share_record: &ShareRecord) -> 
     let mongodb_db = mongodb_client.database("share");
     let mongodb_records_collection = mongodb_db.collection("records");
     let link = share_record.link.clone();
-    let result = mongodb_records_collection.find_one(doc! {
-        "link": link,
-        "active": true,
-    }, None).await.unwrap();
+    let result = mongodb_records_collection
+        .find_one(
+            doc! {
+                "link": link,
+                "active": true,
+            },
+            None,
+        )
+        .await
+        .unwrap();
     if result.is_some() {
         return false;
     }
-    let content_length : u64 = share_record.content_length.to_string().parse::<u64>().unwrap();
+    let content_length: u64 = share_record
+        .content_length
+        .to_string()
+        .parse::<u64>()
+        .unwrap();
     let doc = match share_record.password {
         Some(_) => doc! {
             "link": share_record.link.clone(),
@@ -75,7 +88,10 @@ pub async fn add_record(mongodb_client: &Client, share_record: &ShareRecord) -> 
             "visit_times": share_record.visit_times,
             "active": share_record.active,
             "ban": share_record.ban,
-        }
+        },
     };
-    mongodb_records_collection.insert_one(doc, None).await.is_ok()
+    mongodb_records_collection
+        .insert_one(doc, None)
+        .await
+        .is_ok()
 }

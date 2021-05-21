@@ -6,15 +6,19 @@ use crate::{
     config::{SecurityOptions, StorageOptions},
     db::{add_record, genreate_unique_link},
 };
-use actix_web::{http::HeaderValue, post, get, web, HttpRequest, HttpResponse};
+use actix_web::{get, http::HeaderValue, post, web, HttpRequest, HttpResponse};
+use base64;
 use chrono::{DateTime, Datelike, Duration, Utc};
 use futures::prelude::*;
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
-use rsa::{PaddingScheme, PublicKeyPemEncoding, pem::{EncodeConfig, LineEnding}};
+use rsa::{
+    pem::{EncodeConfig, LineEnding},
+    PaddingScheme, PublicKeyPemEncoding,
+};
 use rusoto_s3::{DeleteObjectRequest, PutObjectRequest, S3Client, S3};
 use rusoto_signature::stream::ByteStream;
+use sha2::{Digest, Sha256};
 use std::lazy::SyncLazy;
-use base64;
 
 fn extract_jwt(auth: &HeaderValue, security_option: &SecurityOptions) -> Option<Claims> {
     let split: Vec<&str> = auth.to_str().unwrap().split("Bearer").collect();
@@ -53,7 +57,7 @@ async fn login(
     HttpResponse::Ok().json(LoginResponse {
         result: true,
         msg: "Successfully logged in.".into(),
-        token
+        token,
     })
 }
 
@@ -83,7 +87,7 @@ async fn session(
             HttpResponse::Ok().json(LoginResponse {
                 result: true,
                 msg: "Refreshed token.".into(),
-                token
+                token,
             })
         }
         None => HttpResponse::Unauthorized().body("Invalid token."),
@@ -94,13 +98,16 @@ async fn session(
 async fn security(security_option: web::Data<SecurityOptions>) -> HttpResponse {
     let security_option = security_option;
     let config = security_option.get_ref();
-    let public_key = config.public_key.to_pem_pkcs8_with_config(EncodeConfig {
-        line_ending: LineEnding::CRLF,
-    }).unwrap();
+    let public_key = config
+        .public_key
+        .to_pem_pkcs8_with_config(EncodeConfig {
+            line_ending: LineEnding::CRLF,
+        })
+        .unwrap();
     HttpResponse::Ok().json(SecurityResponse {
         result: true,
         msg: "Security information secured.".into(),
-        public_key
+        public_key,
     })
 }
 
@@ -185,11 +192,19 @@ async fn upload(
 
     let password: Option<String> = match query.password {
         Some(_) => {
-            let text = base64::decode_config(query.password.clone().unwrap(), base64::URL_SAFE).unwrap();
-            let data = security_option.private_key.decrypt(PaddingScheme::new_pkcs1v15_encrypt(), &text).unwrap();
-            Some(String::from_utf8(data).unwrap())
-        },
-        None => None
+            let text =
+                base64::decode_config(query.password.clone().unwrap(), base64::URL_SAFE).unwrap();
+            let data = security_option
+                .private_key
+                .decrypt(PaddingScheme::new_pkcs1v15_encrypt(), &text)
+                .unwrap();
+            let data_string = String::from_utf8(data).unwrap();
+            let mut hasher = Sha256::new();
+            hasher.update(data_string.as_bytes());
+            let result: String = format!("{:X}", hasher.finalize());
+            Some(result)
+        }
+        None => None,
     };
 
     match query.filetype.as_ref() {

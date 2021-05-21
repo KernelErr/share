@@ -25,5 +25,5 @@ pub struct ShareRecord {
     pub user_agent: String,
     pub visit_times: u32,
     pub active: bool,
-    pub ban: bool
+    pub ban: bool,
 }

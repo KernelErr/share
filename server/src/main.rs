@@ -1,13 +1,13 @@
 #![feature(once_cell)]
 use actix_web::{web, App, HttpServer};
 
-mod config;
-mod models;
-mod middlewares;
 mod api;
+mod config;
 mod db;
+mod middlewares;
+mod models;
 use config::{DatabaseOptions, SecurityOptions};
-use mongodb::{Client, options::ClientOptions};
+use mongodb::{options::ClientOptions, Client};
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -19,9 +19,9 @@ async fn main() -> std::io::Result<()> {
 
     HttpServer::new(move || {
         App::new()
-        .data(mongodb_client.clone())
-        .data(security_option.clone())
-        .service(web::scope("/v1").configure(api::v1::common::init_routes))
+            .data(mongodb_client.clone())
+            .data(security_option.clone())
+            .service(web::scope("/v1").configure(api::v1::common::init_routes))
     })
     .bind("127.0.0.1:8080")?
     .run()

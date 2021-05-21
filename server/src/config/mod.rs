@@ -1,7 +1,7 @@
-use std::env;
 use nanoid::nanoid;
-use rsa::{RSAPrivateKey, RSAPublicKey};
 use rand::rngs::OsRng;
+use rsa::{RSAPrivateKey, RSAPublicKey};
+use std::env;
 
 pub struct StorageOptions {
     pub access_key: String,
@@ -45,7 +45,7 @@ pub struct SecurityOptions {
 impl SecurityOptions {
     pub fn generate() -> Self {
         let mut rng = OsRng;
-        let bit  = 2048;
+        let bit = 2048;
         let private_key = RSAPrivateKey::new(&mut rng, bit).unwrap();
         let public_key = RSAPublicKey::from(&private_key);
         let secret_key = nanoid!();

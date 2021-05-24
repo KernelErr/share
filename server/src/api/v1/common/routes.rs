@@ -243,6 +243,7 @@ async fn upload(
             unique_id
         );
         S3.0.put_object(PutObjectRequest {
+            content_length: Some(content_length as i64),
             content_type: Some(ct.to_string()),
             key: s3_key,
             body: Some(ByteStream::new(rx.map_err(|err| {

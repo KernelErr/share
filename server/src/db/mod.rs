@@ -52,11 +52,6 @@ pub async fn add_record(mongodb_client: &Client, share_record: &ShareRecord) -> 
     if result.is_some() {
         return false;
     }
-    let content_length: u64 = share_record
-        .content_length
-        .to_string()
-        .parse::<u64>()
-        .unwrap();
     let doc = match share_record.password {
         Some(_) => doc! {
             "link": share_record.link.clone(),
@@ -64,7 +59,7 @@ pub async fn add_record(mongodb_client: &Client, share_record: &ShareRecord) -> 
             "filetype": share_record.filetype.clone(),
             "object_key": share_record.object_key.clone(),
             "content_type": share_record.content_type.clone(),
-            "content_length": content_length,
+            "content_length": share_record.content_length as u64,
             "create_time": share_record.create_time,
             "expire_time": share_record.expire_time,
             "password": share_record.password.clone().unwrap(),
@@ -81,7 +76,7 @@ pub async fn add_record(mongodb_client: &Client, share_record: &ShareRecord) -> 
             "filetype": share_record.filetype.clone(),
             "object_key": share_record.object_key.clone(),
             "content_type": share_record.content_type.clone(),
-            "content_length": content_length,
+            "content_length": share_record.content_length as u64,
             "create_time": share_record.create_time,
             "expire_time": share_record.expire_time,
             "password": null,

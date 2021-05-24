@@ -1,10 +1,13 @@
 use crate::models::file::ShareRecord;
-use mongodb::{bson::doc, Client};
+use mongodb::{
+    bson::{self, doc},
+    Client,
+};
 use nanoid::nanoid;
 
 pub async fn genreate_unique_link(mongodb_client: &Client) -> String {
     let mongodb_db = mongodb_client.database("share");
-    let mongodb_records_collection = mongodb_db.collection("records");
+    let mongodb_records_collection = mongodb_db.collection::<bson::Document>("records");
     let alphabet: [char; 53] = [
         'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'm', 'n', 'p', 'q', 'r', 's', 't',
         'u', 'w', 'x', 'y', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'J', 'K', 'L', 'M', 'N', 'P',

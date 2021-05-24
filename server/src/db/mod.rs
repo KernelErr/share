@@ -5,7 +5,7 @@ use mongodb::{
 };
 use nanoid::nanoid;
 
-pub async fn genreate_unique_link(mongodb_client: &Client) -> String {
+pub async fn generate_unique_link(mongodb_client: &Client) -> String {
     let mongodb_db = mongodb_client.database("share");
     let mongodb_records_collection = mongodb_db.collection::<bson::Document>("records");
     let alphabet: [char; 53] = [

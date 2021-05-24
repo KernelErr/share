@@ -1,10 +1,10 @@
 use crate::middlewares::auth::AuthorizationService;
 use crate::models::file::{ShareRecord, UploadQuery};
-use crate::models::response::{LoginResponse, SecurityResponse};
+use crate::models::response::{LoginResponse, SecurityResponse, UploadResponse};
 use crate::models::user::{Claims, Login};
 use crate::{
     config::{SecurityOptions, StorageOptions},
-    db::{add_record, genreate_unique_link},
+    db::{add_record, generate_unique_link},
 };
 use actix_web::{get, http::HeaderValue, post, web, HttpRequest, HttpResponse};
 use base64;
@@ -297,8 +297,10 @@ async fn upload(
         unique_id
     );
 
+    let link = generate_unique_link(&mongodb_client).await;
+
     let share_record = ShareRecord {
-        link: genreate_unique_link(&mongodb_client).await,
+        link: link.clone(),
         filename: query.filename.clone(),
         filetype: final_type.into(),
         object_key: s3_key,
@@ -316,7 +318,11 @@ async fn upload(
     };
 
     match add_record(&mongodb_client, &share_record).await {
-        true => HttpResponse::Ok().finish(),
+        true => HttpResponse::Ok().json(UploadResponse {
+            result: true,
+            msg: "Uploaded.".into(),
+            link: link.clone(),
+        }),
         false => HttpResponse::InternalServerError().finish(),
     }
 }

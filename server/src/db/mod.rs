@@ -1,4 +1,5 @@
-use crate::models::file::ShareRecord;
+use crate::models::file::{ContentRecord, ShareRecord};
+use chrono::{DateTime, Utc};
 use mongodb::{
     bson::{self, doc},
     Client,
@@ -92,4 +93,40 @@ pub async fn add_record(mongodb_client: &Client, share_record: &ShareRecord) -> 
         .insert_one(doc, None)
         .await
         .is_ok()
+}
+
+pub async fn get_record(mongodb_client: &Client, link: String) -> Option<ContentRecord> {
+    let mongodb_db = mongodb_client.database("share");
+    let mongodb_records_collections = mongodb_db.collection::<bson::Document>("records");
+    let utc: DateTime<Utc> = Utc::now();
+    let utc: bson::DateTime = utc.into();
+    let result = mongodb_records_collections
+        .find_one(
+            doc! {"link": link.clone(), "active": true, "ban": false},
+            None,
+        )
+        .await
+        .unwrap();
+    if let Some(doc) = result {
+        let expire_time = doc.get("expire_time").unwrap().as_datetime().unwrap();
+        if expire_time.lt(&utc) {
+            return None;
+        }
+        let password: Option<String> = match doc.get_str("password") {
+            Ok(s) => Some(s.into()),
+            Err(_) => None,
+        };
+        Some(ContentRecord {
+            link: doc.get_str("link").unwrap().into(),
+            filename: doc.get_str("filename").unwrap().into(),
+            filetype: doc.get_str("filetype").unwrap().into(),
+            content_type: doc.get_str("content_type").unwrap().into(),
+            content_length: doc.get_i64("content_length").unwrap() as usize,
+            object_key: doc.get_str("object_key").unwrap().into(),
+            password,
+            content: None,
+        })
+    } else {
+        None
+    }
 }

@@ -1,6 +1,10 @@
+use crate::db::get_record;
 use crate::middlewares::auth::AuthorizationService;
+use crate::models::file::ContentQuery;
 use crate::models::file::{ShareRecord, UploadQuery};
-use crate::models::response::{LoginResponse, SecurityResponse, UploadResponse};
+use crate::models::response::{
+    ContentResponse, LoginResponse, SecurityResponse, UniversalReponse, UploadResponse,
+};
 use crate::models::user::{Claims, Login};
 use crate::{
     config::{SecurityOptions, StorageOptions},
@@ -15,7 +19,7 @@ use rsa::{
     pem::{EncodeConfig, LineEnding},
     PaddingScheme, PublicKeyPemEncoding,
 };
-use rusoto_s3::{DeleteObjectRequest, PutObjectRequest, S3Client, S3};
+use rusoto_s3::{DeleteObjectRequest, GetObjectRequest, PutObjectRequest, S3Client, S3};
 use rusoto_signature::stream::ByteStream;
 use sha2::{Digest, Sha256};
 use std::lazy::SyncLazy;
@@ -327,9 +331,107 @@ async fn upload(
     }
 }
 
+#[get("/share/{link}")]
+async fn share(
+    mongodb_client: web::Data<mongodb::Client>,
+    security_option: web::Data<SecurityOptions>,
+    link: web::Path<String>,
+    query: web::Query<ContentQuery>,
+) -> HttpResponse {
+    let record = match get_record(&mongodb_client, link.into_inner()).await {
+        Some(doc) => doc,
+        None => {
+            return HttpResponse::NotFound().json(UniversalReponse {
+                result: false,
+                msg: "Not found.".into(),
+            });
+        }
+    };
+
+    let password: Option<String> = match query.password {
+        Some(_) => {
+            let text =
+                base64::decode_config(query.password.clone().unwrap(), base64::URL_SAFE).unwrap();
+            let data = security_option
+                .private_key
+                .decrypt(PaddingScheme::new_pkcs1v15_encrypt(), &text)
+                .unwrap();
+            let data_string = String::from_utf8(data).unwrap();
+            let mut hasher = Sha256::new();
+            hasher.update(data_string.as_bytes());
+            let result: String = format!("{:X}", hasher.finalize());
+            Some(result)
+        }
+        None => None,
+    };
+
+    if record.password.is_some() {
+        if password.is_none() {
+            return HttpResponse::Unauthorized().json(UniversalReponse {
+                result: true,
+                msg: "Password needed.".into(),
+            });
+        }
+        if !record.password.eq(&password) {
+            return HttpResponse::Forbidden().json(UniversalReponse {
+                result: false,
+                msg: "Wrong password.".into(),
+            });
+        }
+    }
+
+    if record.filetype.eq("code") {
+        let object =
+            S3.0.get_object(GetObjectRequest {
+                bucket: S3.1.clone(),
+                key: record.object_key.clone(),
+                ..Default::default()
+            })
+            .await;
+        match object {
+            Ok(object) => {
+                let mut object = object;
+                let body = object.body.take().unwrap();
+                let body = body.map_ok(|b| b.to_vec()).try_concat().await.unwrap();
+                let body = base64::encode(body);
+                return HttpResponse::Ok().json(ContentResponse {
+                    result: true,
+                    link: record.link.clone(),
+                    filetype: record.filetype.clone(),
+                    filename: record.filename.clone(),
+                    content_type: record.content_type.clone(),
+                    content_length: record.content_length,
+                    content: Some(body),
+                });
+            }
+            Err(_) => {
+                return HttpResponse::NotFound().json(UniversalReponse {
+                    result: false,
+                    msg: "Not found.".into(),
+                });
+            }
+        }
+    }
+
+    if record.filetype.eq("file") {
+        return HttpResponse::Ok().json(ContentResponse {
+            result: true,
+            link: record.link.clone(),
+            filetype: record.filetype.clone(),
+            filename: record.filename.clone(),
+            content_type: record.content_type.clone(),
+            content_length: record.content_length,
+            content: None,
+        });
+    }
+
+    HttpResponse::Ok().finish()
+}
+
 pub fn init_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(login);
     cfg.service(session);
     cfg.service(upload);
     cfg.service(security);
+    cfg.service(share);
 }

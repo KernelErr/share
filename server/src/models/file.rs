@@ -27,3 +27,20 @@ pub struct ShareRecord {
     pub active: bool,
     pub ban: bool,
 }
+
+#[derive(Serialize, Deserialize)]
+pub struct ContentRecord {
+    pub link: String,
+    pub filetype: String,
+    pub filename: String,
+    pub content_type: String,
+    pub content_length: usize,
+    pub object_key: String,
+    pub password: Option<String>,
+    pub content: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ContentQuery {
+    pub password: Option<String>,
+}
